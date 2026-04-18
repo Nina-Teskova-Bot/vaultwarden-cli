@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
+use std::ffi::OsString;
 use vaultwarden_cli::commands;
+
+mod self_describe;
 
 #[derive(Parser)]
 #[command(name = "vaultwarden-cli")]
@@ -177,6 +180,46 @@ enum Commands {
         #[arg(short = 's', long)]
         skip_missing: bool,
     },
+
+    /// Describe command capabilities for agents and automation
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillCommands {
+    /// List supported top-level commands
+    List,
+
+    /// Emit a JSON description for a command
+    Describe {
+        /// Command name to describe (for example: unlock, get-uri, run)
+        command: String,
+    },
+}
+
+fn maybe_handle_json_help(args: &[OsString]) -> bool {
+    let help_json = [OsString::from("--help"), OsString::from("--json")];
+    if args.len() != 4 || args[2..] != help_json {
+        return false;
+    }
+
+    let Some(command_name) = args[1].to_str() else {
+        return false;
+    };
+
+    if !self_describe::has_command(command_name) {
+        return false;
+    }
+
+    if let Err(error) = self_describe::print_command_description(command_name) {
+        eprintln!("Error: {error:#}");
+        std::process::exit(1);
+    }
+
+    true
 }
 
 fn effective_format(format: &str, username: bool, password: bool) -> &str {
@@ -191,7 +234,12 @@ fn effective_format(format: &str, username: bool, password: bool) -> &str {
 
 #[tokio::main]
 async fn main() {
-    let cli = Cli::parse();
+    let raw_args: Vec<OsString> = std::env::args_os().collect();
+    if maybe_handle_json_help(&raw_args) {
+        return;
+    }
+
+    let cli = Cli::parse_from(raw_args);
 
     let result = match cli.command {
         Commands::Login {
@@ -269,6 +317,15 @@ async fn main() {
             output,
             skip_missing,
         } => commands::interpolate(&file, output.as_deref(), skip_missing).await,
+        Commands::Skill { command } => match command {
+            SkillCommands::List => {
+                self_describe::print_command_list();
+                Ok(())
+            }
+            SkillCommands::Describe { command } => {
+                self_describe::print_command_description(&command)
+            }
+        },
     };
 
     if let Err(e) = result {
@@ -373,7 +430,7 @@ mod tests {
         assert_eq!(item, "item-name");
         assert!(!username);
         assert!(password);
-        assert_eq!(format, "json"); // default
+        assert_eq!(format, "json");
         assert_eq!(org, None);
         assert_eq!(collection, None);
     }
@@ -478,5 +535,50 @@ mod tests {
         assert_eq!(file, "config.yml");
         assert_eq!(output, Some("rendered.yml".to_string()));
         assert!(skip_missing);
+    }
+
+    #[test]
+    fn test_cli_skill_list_parsing() {
+        let cli = Cli::parse_from(["vaultwarden-cli", "skill", "list"]);
+        let Commands::Skill { command } = cli.command else {
+            panic!("expected Skill command");
+        };
+        assert!(matches!(command, SkillCommands::List));
+    }
+
+    #[test]
+    fn test_cli_skill_describe_parsing() {
+        let cli = Cli::parse_from(["vaultwarden-cli", "skill", "describe", "unlock"]);
+        let Commands::Skill { command } = cli.command else {
+            panic!("expected Skill command");
+        };
+        let SkillCommands::Describe { command } = command else {
+            panic!("expected skill describe command");
+        };
+        assert_eq!(command, "unlock");
+    }
+
+    #[test]
+    fn test_json_help_fallback_matches_known_command() {
+        let args = vec![
+            OsString::from("vaultwarden-cli"),
+            OsString::from("unlock"),
+            OsString::from("--help"),
+            OsString::from("--json"),
+        ];
+
+        assert!(maybe_handle_json_help(&args));
+    }
+
+    #[test]
+    fn test_json_help_fallback_ignores_unknown_command() {
+        let args = vec![
+            OsString::from("vaultwarden-cli"),
+            OsString::from("missing-command"),
+            OsString::from("--help"),
+            OsString::from("--json"),
+        ];
+
+        assert!(!maybe_handle_json_help(&args));
     }
 }

@@ -277,3 +277,19 @@ MIT
 
 - [Vaultwarden](https://github.com/dani-garcia/vaultwarden) - Bitwarden-compatible server
 - [Bitwarden](https://bitwarden.com/) - Original password manager
+
+## Agent-friendly self-description
+
+This CLI now exposes a lightweight self-description surface for automation and coding agents:
+
+```bash
+vaultwarden-cli skill list
+vaultwarden-cli skill describe unlock
+vaultwarden-cli skill describe run
+```
+
+`skill list` prints top-level commands, one per line.
+
+`skill describe <command>` prints a JSON contract with usage, examples, arguments, options, environment variables, and notes.
+
+That gives agents a stable discovery path without scraping human help text.
